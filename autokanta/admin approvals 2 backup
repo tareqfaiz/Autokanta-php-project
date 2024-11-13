@@ -1,0 +1,347 @@
+<?php
+session_start();
+include("database.php");
+
+// Check if the user is logged in and is an admin
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+    header("Location: login.php");
+    exit;
+}
+
+// Initialize variables
+$updateRequests = [];
+$message = "";
+$updateHistory = [];
+
+// Handle search functionality
+$userSearch = "";
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['search_user'])) {
+    $userSearch = trim($_POST['search_user']);
+}
+
+// Fetch pending update requests
+$query = "SELECT ur.id, ur.user_id, ur.new_first_name, ur.new_last_name, 
+                 ur.new_address, ur.new_phone, ur.new_licnumber, 
+                 ur.new_car_model, ur.new_car_color, u.username, u.email 
+          FROM update_requests ur 
+          JOIN users u ON ur.user_id = u.id 
+          WHERE ur.status IS NULL
+          ORDER BY ur.created_at DESC";
+
+$stmt = $conn->prepare($query);
+$stmt->execute();
+$result = $stmt->get_result();
+
+while ($row = $result->fetch_assoc()) {
+    $updateRequests[] = $row;
+}
+
+// Handle approve or reject actions
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action'])) {
+    // Extracting variables as before
+    $action = $_POST['action'];
+    $requestId = intval($_POST['request_id']);
+    $userId = intval($_POST['user_id']);
+    
+    // Fetch new data from POST
+    $newFirstName = $_POST['new_first_name'];
+    $newLastName = $_POST['new_last_name'];
+    $newAddress = $_POST['new_address'];
+    $newPhone = $_POST['new_phone'];
+    $newLicnumber = $_POST['new_licnumber'];
+    $newModel = $_POST['new_model'];
+    $newColor = $_POST['new_color'];
+    
+    $conn->begin_transaction();
+    
+    try {
+        if ($action === 'approve') {
+            // Update user tables as before
+            // ...
+            // Set the status to 'approved'
+            $updateRequestQuery = "UPDATE update_requests SET status = 'approved' WHERE id = ?";
+            $stmtUpdateRequest = $conn->prepare($updateRequestQuery);
+            $stmtUpdateRequest->bind_param("i", $requestId);
+            $stmtUpdateRequest->execute();
+            $stmtUpdateRequest->close();
+            
+            // Notify user and commit as before
+            // ...
+      
+            $message = "Update request approved successfully!";
+        } elseif ($action === 'reject') {
+            $comment = $_POST['reject_comment'] ?? '';
+
+            // Update request with rejection comment
+            $updateRequestQuery = "UPDATE update_requests SET status = 'rejected', comment = ? WHERE id = ?";
+            $stmtUpdateRequest = $conn->prepare($updateRequestQuery);
+            $stmtUpdateRequest->bind_param("si", $comment, $requestId);
+            $stmtUpdateRequest->execute();
+            $stmtUpdateRequest->close();
+
+            // Notify user and commit as before
+            // ...
+      
+            $message = "Rejection noted successfully.";
+        }
+
+        $conn->commit();
+    } catch (Exception $e) {
+        $conn->rollback();
+        $message = "Error processing request: " . $e->getMessage();
+    }
+}
+
+// Fetch update history for searched users
+if ($userSearch) {
+    $historyQuery = "SELECT ur.*, u.username, u.email FROM update_requests ur 
+                     JOIN users u ON ur.user_id = u.id 
+                     WHERE CONCAT(u.username, ' ', u.email) LIKE ?";
+    $stmtHistory = $conn->prepare($historyQuery);
+    $searchTerm = "%" . $userSearch . "%";
+    $stmtHistory->bind_param("s", $searchTerm);
+    $stmtHistory->execute();
+    $historyResult = $stmtHistory->get_result();
+
+    while ($row = $historyResult->fetch_assoc()) {
+        $updateHistory[] = $row;
+    }
+
+    $stmtHistory->close();
+}
+
+// Include header
+include("header.php");
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Approval Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .message {
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #dff0d8;
+            color: #3c763d;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .search-container {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .search-container input {
+            padding: 10px;
+            width: 80%;
+            max-width: 300px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .search-container button {
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            margin-left: 10px;
+            cursor: pointer;
+        }
+
+        .search-container button:hover {
+            background-color: #0056b3;
+        }
+
+        .requests-table, .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .requests-table th, .history-table th,
+        .requests-table td, .history-table td {
+            padding: 10px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+
+        .requests-table th, .history-table th {
+            background-color: #f2f2f2;
+        }
+
+        .approve {
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .approve:hover {
+            background-color: #218838;
+        }
+
+        .reject {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .reject:hover {
+            background-color: #c82333;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Admin Approval Dashboard</h1>
+
+    <?php if ($message): ?>
+        <div class="message"><?php echo htmlspecialchars($message); ?></div>
+    <?php endif; ?>
+
+    <div class="search-container">
+        <form method="POST" action="">
+            <input type="text" name="search_user" placeholder="Search by username or email" value="<?php echo htmlspecialchars($userSearch); ?>">
+            <button type="submit">Search</button>
+        </form>
+    </div>
+
+    <h2>Pending Update Requests</h2>
+    <?php if (count($updateRequests) > 0): ?>
+        <table class="requests-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>New First Name</th>
+                    <th>New Last Name</th>
+                    <th>New Address</th>
+                    <th>New Phone</th>
+                    <th>New License Number</th>
+                    <th>New Car Model</th>
+                    <th>New Car Color</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($updateRequests as $request): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($request['username']); ?></td>
+                        <td><?php echo htmlspecialchars($request['email']); ?></td>
+                        <td><?php echo htmlspecialchars($request['new_first_name']); ?></td>
+                        <td><?php echo htmlspecialchars($request['new_last_name']); ?></td>
+                        <td><?php echo htmlspecialchars($request['new_address']); ?></td>
+                        <td><?php echo htmlspecialchars($request['new_phone']); ?></td>
+                        <td><?php echo htmlspecialchars($request['new_licnumber']); ?></td>
+                        <td><?php echo htmlspecialchars($request['new_car_model']); ?></td>
+                        <td><?php echo htmlspecialchars($request['new_car_color']); ?></td>
+                        <td>
+                            <form method="POST" style="display: inline;">
+                                <input type="hidden" name="user_id" value="<?php echo $request['user_id']; ?>">
+                                <input type="hidden" name="request_id" value="<?php echo $request['id']; ?>">
+                                <input type="hidden" name="new_first_name" value="<?php echo htmlspecialchars($request['new_first_name']); ?>">
+                                <input type="hidden" name="new_last_name" value="<?php echo htmlspecialchars($request['new_last_name']); ?>">
+                                <input type="hidden" name="new_address" value="<?php echo htmlspecialchars($request['new_address']); ?>">
+                                <input type="hidden" name="new_phone" value="<?php echo htmlspecialchars($request['new_phone']); ?>">
+                                <input type="hidden" name="new_licnumber" value="<?php echo htmlspecialchars($request['new_licnumber']); ?>">
+                                <input type="hidden" name="new_model" value="<?php echo htmlspecialchars($request['new_car_model']); ?>">
+                                <input type="hidden" name="new_color" value="<?php echo htmlspecialchars($request['new_car_color']); ?>">
+                                <button type="submit" name="action" value="approve" class="approve">Approve</button>
+                            </form>
+                            <button type="button" onclick="document.getElementById('reject_comment_<?php echo $request['id']; ?>').style.display='block';">Reject</button>
+                            <div id="reject_comment_<?php echo $request['id']; ?>" style="display:none;">
+                                <form method="POST" style="display: inline;">
+                                    <input type="hidden" name="user_id" value="<?php echo $request['user_id']; ?>">
+                                    <input type="hidden" name="request_id" value="<?php echo $request['id']; ?>">
+                                    <input type="text" name="reject_comment" placeholder="Rejection reason" required>
+                                    <button type="submit" name="action" value="reject" class="reject">Submit Rejection</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    <?php else: ?>
+        <p>No pending update requests.</p>
+    <?php endif; ?>
+
+    <h2>Update History</h2>
+    <?php if ($userSearch && count($updateHistory) > 0): ?>
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>First Name</th>
+                    <th>Last Name</th>
+                    <th>Address</th>
+                    <th>Phone</th>
+                    <th>License Number</th>
+                    <th>Car Model</th>
+                    <th>Car Color</th>
+                    <th>Status</th>
+                    <th>Comment</th>
+                    <th>Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($updateHistory as $history): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($history['username']); ?></td>
+                        <td><?php echo htmlspecialchars($history['email']); ?></td>
+                        <td><?php echo htmlspecialchars($history['new_first_name']); ?></td>
+                        <td><?php echo htmlspecialchars($history['new_last_name']); ?></td>
+                        <td><?php echo htmlspecialchars($history['new_address']); ?></td>
+                        <td><?php echo htmlspecialchars($history['new_phone']); ?></td>
+                        <td><?php echo htmlspecialchars($history['new_licnumber']); ?></td>
+                        <td><?php echo htmlspecialchars($history['new_car_model']); ?></td>
+                        <td><?php echo htmlspecialchars($history['new_car_color']); ?></td>
+                        <td><?php echo htmlspecialchars($history['status']); ?></td>
+                        <td><?php echo htmlspecialchars($history['comment'] ?? ''); ?></td>
+                        <td><?php echo htmlspecialchars($history['timestamp']); ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    <?php elseif ($userSearch): ?>
+        <p>No update history found for the searched user.</p>
+    <?php endif; ?>
+</div>
+
+<?php include("footer.php"); ?>
+</body>
+</html>

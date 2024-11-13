@@ -1,0 +1,233 @@
+<?php
+session_start();
+include("database.php");
+
+// Check if the user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit;
+}
+
+// Retrieve the user ID from session
+$userId = $_SESSION['user_id'];
+
+// Prepare to fetch user details, personal information, and car information
+$query = "SELECT u.username, u.email, p.name, p.address, p.phone, p.socnumber, c.licnumber, c.model, c.color 
+          FROM users u 
+          LEFT JOIN person p ON u.id = p.user_id 
+          LEFT JOIN car c ON u.id = c.user_id 
+          WHERE u.id = ?";
+$stmt = $conn->prepare($query);
+$stmt->bind_param("i", $userId);
+$stmt->execute();
+$result = $stmt->get_result();
+
+// Initialize variables
+$userDetails = null;
+$personInfo = null;
+$carInfo = null;
+
+if ($result->num_rows > 0) {
+    // Fetch the user details
+    $details = $result->fetch_assoc();
+    $userDetails = $details;
+    $personInfo = [
+        'name' => $details['name'],
+        'address' => $details['address'],
+        'phone' => $details['phone'],
+        'socnumber' => $details['socnumber']
+    ];
+    $carInfo = [
+        'licnumber' => $details['licnumber'],
+        'model' => $details['model'],
+        'color' => $details['color']
+    ];
+} else {
+    error_log("No user found with ID: " . $userId);
+}
+
+$stmt->close();
+
+// Initialize message variable
+$message = "";
+
+// Function to capitalize address
+function capitalizeAddress($address) {
+    return ucwords(strtolower($address));
+}
+
+// Function to validate Social Security Number format
+function isValidSocNumber($socNumber) {
+    return preg_match('/^\d{6}[-\w\W]{0,5}$/', $socNumber);
+}
+
+// Process form submission
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    // Gather form data
+    $firstName = trim($_POST['first_name']);
+    $lastName = trim($_POST['last_name']);
+    $address = capitalizeAddress(trim($_POST['address']));
+    $phone = trim($_POST['phone']);
+    $socNumber = trim($_POST['socnumber']);
+    $licNumber = strtoupper(trim($_POST['licnumber']));
+    $carModel = ucfirst(strtolower(trim($_POST['car_model'])));
+    $carColor = ucfirst(strtolower(trim($_POST['car_color'])));
+
+    // Create full name
+    $fullName = ucwords(strtolower($firstName)) . " " . ucwords(strtolower($lastName));
+
+    // Validate inputs
+    if (empty($firstName) || empty($lastName) || empty($address) || empty($phone) || empty($socNumber) || empty($licNumber) || empty($carModel) || empty($carColor)) {
+        $message = "All fields are required.";
+    } elseif (!isValidSocNumber($socNumber)) {
+        $message = "Invalid Social Security Number format.";
+    } else {
+        // Begin transaction
+        $conn->begin_transaction();
+        try {
+            // Update the `person` table
+            $updatePersonQuery = "UPDATE person SET name = ?, address = ?, phone = ?, socnumber = ? WHERE user_id = ?";
+            $stmt = $conn->prepare($updatePersonQuery);
+            $stmt->bind_param("ssssi", $fullName, $address, $phone, $socNumber, $userId);
+            $stmt->execute();
+
+            // Update the `car` table
+            $updateCarQuery = "UPDATE car SET licnumber = ?, model = ?, color = ? WHERE user_id = ?";
+            $stmtCar = $conn->prepare($updateCarQuery);
+            $stmtCar->bind_param("sssi", $licNumber, $carModel, $carColor, $userId);
+            $stmtCar->execute();
+
+            // Commit transaction
+            $conn->commit();
+            $message = "Information updated successfully!";
+        } catch (Exception $e) {
+            // Roll back on error
+            $conn->rollback();
+            error_log("Database error: " . $e->getMessage());
+            $message = "Error updating information. Please try again later.";
+        } finally {
+            // Close prepared statements
+            $stmt->close();
+            $stmtCar->close();
+        }
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>User Information</title>
+    <link rel="stylesheet" href="style.css"> <!-- Link to an external CSS file, ensure you create it or adjust styles -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+        }
+        .container {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        label {
+            display: block;
+            margin: 10px 0 5px;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #218838;
+        }
+        .message {
+            margin: 20px 0;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #e9ecef;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+
+<?php include("header.php"); ?> <!-- Include the header -->
+
+<div class="container">
+    <h1>User Information</h1>
+
+    <?php if ($userDetails): ?>
+        <p><strong>Username:</strong> <?php echo htmlspecialchars($userDetails['username']); ?></p>
+        <p><strong>Email:</strong> <?php echo htmlspecialchars($userDetails['email']); ?></p>
+        <p><strong>Full Name:</strong> <?php echo htmlspecialchars($userDetails['name']); ?></p>
+        <p><strong>Address:</strong> <?php echo htmlspecialchars($userDetails['address']); ?></p>
+        <p><strong>Phone:</strong> <?php echo htmlspecialchars($userDetails['phone']); ?></p>
+        <p><strong>Social Security Number:</strong> <?php echo htmlspecialchars($userDetails['socnumber']); ?></p>
+        <p><strong>License Number:</strong> <?php echo htmlspecialchars($userDetails['licnumber']); ?></p>
+        <p><strong>Car Model:</strong> <?php echo htmlspecialchars($userDetails['model']); ?></p>
+        <p><strong>Car Color:</strong> <?php echo htmlspecialchars($userDetails['color']); ?></p>
+    <?php else: ?>
+        <p>No user details found. Please contact support.</p>
+    <?php endif; ?>
+
+    <h2>Update Your Information</h2>
+
+    <?php if ($message): ?>
+        <div class="message"><?php echo htmlspecialchars($message); ?></div>
+    <?php endif; ?>
+
+    <form method="POST" action="">
+        <h3>Personal Information</h3>
+        <label>First Name:</label>
+        <input type="text" name="first_name" value="<?php echo htmlspecialchars($personInfo['name'] ? explode(' ', $personInfo['name'])[0] : ''); ?>" required>
+        
+        <label>Last Name:</label>
+        <input type="text" name="last_name" value="<?php echo htmlspecialchars($personInfo['name'] ? explode(' ', $personInfo['name'])[1] : ''); ?>" required>
+        
+        <label>Address:</label>
+        <input type="text" name="address" value="<?php echo htmlspecialchars($personInfo['address']); ?>" required>
+        
+        <label>Phone:</label>
+        <input type="text" name="phone" value="<?php echo htmlspecialchars($personInfo['phone']); ?>" required>
+        
+        <label>Social Security Number:</label>
+        <input type="text" name="socnumber" value="<?php echo htmlspecialchars($personInfo['socnumber']); ?>" required>
+
+        <h3>Car Information</h3>
+        <label>License Number:</label>
+        <input type="text" name="licnumber" value="<?php echo htmlspecialchars($carInfo['licnumber']); ?>" required>
+        
+        <label>Car Model:</label>
+        <input type="text" name="car_model" value="<?php echo htmlspecialchars($carInfo['model']); ?>" required>
+        
+        <label>Car Color:</label>
+        <input type="text" name="car_color" value="<?php echo htmlspecialchars($carInfo['color']); ?>" required>
+
+        <button type="submit">Update Information</button>
+    </form>
+</div>
+
+<?php include("footer.php"); ?> <!-- Include the footer -->
+
+</body>
+</html>
