@@ -242,6 +242,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             background-color: #e7f3ff; /* Light blue background on hover */
         }
     </style>
+    <script>
+    function toggleDropdown() {
+        var dropdown = document.getElementById("moreNotifications");
+        if (dropdown.style.display === "none" || dropdown.style.display === "") {
+            dropdown.style.display = "block";
+        } else {
+            dropdown.style.display = "none";
+        }
+    }
+    </script>
 </head>
 <body>
 
